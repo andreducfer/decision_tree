@@ -1,7 +1,4 @@
-import datetime
 import numpy as np
-import os
-import subprocess
 import time
 
 class Instance:
@@ -46,35 +43,3 @@ class Instance:
         print("----- NUMBER OF SAMPLES: " + str(self.num_samples))
         print("----- NUMBER OF ATTRIBUTES: " + str(self.num_attributes))
         print("----- NUMBER OF CLASSES: " + str(self.num_classes))
-            
-
-class CommandLine:
-    
-    def __init__(self, args):
-        num_args = len(args)
-        if num_args % 2 != 0 or num_args > 8 or num_args < 2:
-            print("ISSUE WITH THE NUMBER OF COMMANDLINE ARGUMENTS: " + str(num_args))
-            exit(0)
-        
-        self.instance_name = args[1]
-        self.instance_path = self._get_instance_path(self.instance_name)
-        self.solution_path = self._get_solution_path(self.instance_name)
-
-        params = {args[i]: args[i+1] for i in range(2, num_args, 2)}
-        self.cpu_time = int(params['-t']) if '-t' in params else 300
-        self.seed = int(params['-seed']) if '-seed' in params else 0
-        self.max_depth = int(params['-depth']) if '-depth' in params else 4
-
-    def _get_instance_path(self, instance_name):
-        instance_filename = instance_name + '.txt'
-
-        file_dir = os.path.dirname(os.path.abspath(__file__))
-        print(os.path.join('..', 'dataset', instance_filename))
-        return os.path.join('..', 'dataset', instance_filename)
-
-    def _get_solution_path(self, instance_name):        
-        time_now = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-        instance_filename = instance_name + '-' + time_now + '.txt'
-
-        file_dir = os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(file_dir, '..', 'solution', instance_filename)

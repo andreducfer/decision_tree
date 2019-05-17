@@ -1,7 +1,9 @@
-from src.data_handler import Instance
+from data_handler import Instance
 
 import enum
 import numpy as np
+import time
+import random
 
 class NodeType(enum.Enum):
     NULL = 0
@@ -35,7 +37,7 @@ class Node:
         self.end_time = 0                                            # Time when the algorithm ended
 
     def evaluate(self):
-        frac = self.num_samples_per_class / self.num_samples
+        frac = self.num_samples_per_class / (self.num_samples + 0.000001)
         frac = frac[self.num_samples_per_class > 0]
         parcial = frac * np.log2(frac)
         self.entropy = -parcial.sum()
@@ -54,27 +56,37 @@ class Solution:
             raise TypeError("ERROR: instance variable is not data_handler.Instance. Type: " + type(instance))
         self.instance = instance # Access to the problem and dataset parameters
         self.tree = [Node(instance) for _ in range(2**(instance.max_depth+1)-1)]
-        self.best_tree = np.array([])
         self.tree[0].node_type = NodeType.LEAF
         for i in range(instance.num_samples):
             self.tree[0].add_sample(i)
         self.tree[0].evaluate()
 
 
-    def get_num_misclassified_samples(self, tree):
+    def get_num_misclassified_samples(self):
         num_misclassified_samples = 0
 
         for d in range(self.instance.max_depth + 1):
             for i in range(2 ** d - 1, 2 ** (d + 1) - 1):
-                if tree[i].node_type == NodeType.LEAF:
-                    num_misclassified = tree[i].num_samples - tree[i].num_majority_class
+                if self.tree[i].node_type == NodeType.LEAF:
+                    num_misclassified = self.tree[i].num_samples - self.tree[i].num_majority_class
                     num_misclassified_samples += num_misclassified
 
         return num_misclassified_samples
 
 
+    def get_accuracy(self):
+        num_misclassified = self.get_num_misclassified_samples()
+        num_samples = self.instance.num_samples
+
+        accuracy = (num_samples - num_misclassified) / num_samples * 100
+
+        return accuracy
+
+
     def print_and_export(self, filename=None):
         num_misclassified_samples = 0
+        accuracy = self.get_accuracy()
+        tree = []
 
         # Print solution
         print("\n---------------------------------------- PRINTING SOLUTION ----------------------------------------")        
@@ -103,16 +115,26 @@ class Solution:
                     continue
                 level_info += node_info
             print(level_info)
+            tree.append(level_info)
         print("%d/%d MISCLASSIFIED SAMPLES" % (num_misclassified_samples, self.instance.num_samples))
+        print("\n%d ACCURACY\n" % accuracy)
         print("---------------------------------------------------------------------------------------------------\n")
 
         if filename is not None:
             # Dump result
             with open(filename, mode='w') as fp:
                 delta = self.instance.end_time - self.instance.start_time
+                fp.write("NUMBER OF SAMPLES: " + str(self.instance.num_samples) + "\n")
+                fp.write("NUMBER OF ATTRIBUTES: " + str(self.instance.num_attributes) + "\n")
+                fp.write("NUMBER OF CLASSES: " + str(self.instance.num_classes) + "\n")
                 fp.write("TIME(s): " + str(delta) + "\n")
                 fp.write("NB_SAMPLES: " + str(self.instance.num_samples) + "\n")
                 fp.write("NB_MISCLASSIFIED: " + str(num_misclassified_samples) + "\n")
+                fp.write("ACCURACY: " + str(accuracy) + "%\n")
+                fp.write("TREE: \n")
+                for level_tree in tree:
+                    fp.write(level_tree + "\n")
+
 
 class Greedy:
 
@@ -123,6 +145,10 @@ class Greedy:
             raise TypeError("ERROR: solution variable is not decision_tree.Solution. Type: " + type(solution))
         self.instance = instance
         self.solution = solution
+        self.acceptable_deterioration_factor = 1.25
+        self.index_nodes_left = np.array([1, 3, 4])
+        self.index_nodes_right = np.array([2, 5, 6])
+        self.index_nodes = np.array([0, 1, 2, 3, 4, 5, 6])
 
     def run(self):
         self._recursive_construction(0, 0)
@@ -131,7 +157,8 @@ class Greedy:
         # BASE CASES -- MAXIMUM LEVEL HAS BEEN ATTAINED OR ALL SAMPLES BELONG TO THE SAME CLASS
         num_majority_class = self.solution.tree[node_id].num_majority_class
         num_samples = self.solution.tree[node_id].num_samples
-        if level >= self.instance.max_depth or  num_majority_class == num_samples :
+        if level >= self.instance.max_depth or num_majority_class == num_samples :
+            self.solution.tree[node_id].level = level
             return
 
         # LOOK FOR A BEST SPLIT
@@ -281,32 +308,114 @@ class Greedy:
             self._zero_nodes(2 * node_id + 2, level + 1)
 
 
-    def local_search(self):
-        self._recursive_construction(0,0)
+    # Return only nodes on the left and right side of the tree that have samples, and is interisting to make perturbation
+    # def _nodes_with_sample(self):
+    #     left_nodes = []
+    #     right_nodes = []
+    #     for node_left in self.index_nodes_left:
+    #         num_samples = self.solution.tree[node_left].num_samples
+    #         num_majority_class = self.solution.tree[node_left].num_majority_class
+    #
+    #         if num_samples > 1 and num_samples > num_majority_class:
+    #             left_nodes.append(node_left)
+    #
+    #     for node_right in self.index_nodes_right:
+    #         num_samples = self.solution.tree[node_right].num_samples
+    #         num_majority_class = self.solution.tree[node_right].num_majority_class
+    #
+    #         if num_samples > 1 and num_samples > num_majority_class:
+    #             right_nodes.append(node_right)
+    #
+    #     return left_nodes, right_nodes
 
+
+    def _nodes_with_sample(self):
+        list_possible_nodes = []
+        for node in self.index_nodes:
+            num_samples = self.solution.tree[node].num_samples
+            num_majority_class = self.solution.tree[node].num_majority_class
+
+            if num_samples > 1 and num_samples > num_majority_class:
+                list_possible_nodes.append(node)
+
+        return list_possible_nodes
+
+
+    # Change splits in 2 nodes at the same time
+    def _perturbation(self):
+        # random_node_left = 0
+        # random_node_right = 0
+
+        # # To see if we have samples in a node to make a perturbation using only nodes with samples
+        # left_nodes, right_nodes = self._nodes_with_sample()
+        #
+        # if len(left_nodes) > 0 and len(right_nodes) > 0:
+        #     random_node_left = random.choice(left_nodes)
+        #     random_node_right = random.choice(right_nodes)
+        # elif len(left_nodes) == 1 and len(right_nodes) == 0:
+        #     random_node_right = left_nodes[0]
+        # elif len(left_nodes) == 0 and len(right_nodes) == 1:
+        #     random_node_right = right_nodes[0]
+        # else:
+        #     if len(right_nodes) >= 2:
+        #         chosen = random.choices(right_nodes, k=2)
+        #         random_node_left = min(chosen)
+        #         random_node_right = max(chosen)
+        #     elif(len(left_nodes) >=2):
+        #         chosen = random.choices(left_nodes, k=2)
+        #         random_node_left = min(chosen)
+        #         random_node_right = max(chosen)
+
+        nodes_with_samples = self._nodes_with_sample()
+        nodes_to_split = random.choices(nodes_with_samples, k = 2)
+
+        random_node_left = min(nodes_to_split)
+        random_node_right = max(nodes_to_split)
+
+
+        level_left = self.solution.tree[random_node_left].level
+        level_right = self.solution.tree[random_node_right].level
+
+        random_split_left = random.choice(self.solution.tree[random_node_left].possible_splits)
+        random_split_right = random.choice(self.solution.tree[random_node_right].possible_splits)
+
+        self._zero_nodes(2 * random_node_left + 1, self.solution.tree[random_node_left].level + 1)
+        self._zero_nodes(2 * random_node_left + 2, self.solution.tree[random_node_left].level + 1)
+        self._zero_nodes(2 * random_node_right + 1, self.solution.tree[random_node_right].level + 1)
+        self._zero_nodes(2 * random_node_right + 2, self.solution.tree[random_node_right].level + 1)
+
+        self._split(random_node_left, level_left, int(random_split_left[0]), random_split_left[1])
+        self._split(random_node_right, level_right, int(random_split_right[0]), random_split_right[1])
+
+        # Return only the minor node to start local search in this node
+        return random_node_left if random_node_left <= random_node_right else random_node_right
+
+
+    def _local_search(self, minor_node, annealing):
         initial_tree = np.copy(self.solution.tree)
-        best_tree = np.copy(self.solution.tree)
-        best_misclassified = self.solution.get_num_misclassified_samples(best_tree)
+        local_tree = np.copy(initial_tree)
+        local_misclassified = self.solution.get_num_misclassified_samples()
+        # initial_misclassified = np.copy(local_misclassified)
 
-        print("===============================================")
-        print("Initial tree:")
-        self.solution.print_and_export()
-
-        if best_misclassified > 0:
+        if local_misclassified > 0:
             num_nodes = len(self.solution.tree)
-            for node_id in range(0, num_nodes):
+            for node_id in range(minor_node, num_nodes):
                 self.solution.tree = np.copy(initial_tree)
                 level = self.solution.tree[node_id].level
 
-                if initial_tree[node_id].node_type == NodeType.INTERNAL:
-                    print("###############################################")
-                    print("node_id: %d" % node_id)
-                    print("Level: " + str(level))
-                    print("Initial number of misclassifieds: " + str(best_misclassified))
+                if self.solution.tree[node_id].node_type == NodeType.INTERNAL:
+                    # print("###############################################")
+                    # print("node_id: %d" % node_id)
+                    # print("Level: " + str(level))
+                    # print("Initial number of misclassifieds: " + str(local_misclassified))
 
                     for i in range(len(self.solution.tree[node_id].possible_gains)):
-                        print("===============================================")
-                        print("Attribute for current split: %d" % i)
+                        # print("===============================================")
+                        # print("Attribute for current split: %d" % i)
+
+                        # If this happens we don't have more valid splits for this node
+                        if self.solution.tree[node_id].possible_gains[i] == 0:
+                            break
 
                         self.solution.tree = np.copy(initial_tree)
 
@@ -317,14 +426,93 @@ class Greedy:
                         best_split_threhold = self.solution.tree[node_id].possible_splits[i, 1]
 
                         self._split(node_id, level, best_split_attribute_id, best_split_threhold)
-                        split_misclassified = self.solution.get_num_misclassified_samples(self.solution.tree)
+                        split_misclassified = self.solution.get_num_misclassified_samples()
 
-                        if best_misclassified > split_misclassified:
-                            best_tree = np.copy(self.solution.tree)
-                            best_misclassified = split_misclassified
+                        # if split_misclassified < local_misclassified * self.acceptable_deterioration_factor:
+                        if split_misclassified < local_misclassified:
+                            local_tree = np.copy(self.solution.tree)
+                            local_misclassified = split_misclassified
+                            # break
+                # if self.acceptable_deterioration_factor > 1:
+                #     self.acceptable_deterioration_factor = self.acceptable_deterioration_factor - (self.acceptable_deterioration_factor * annealing)
+                # else:
+                #     self.acceptable_deterioration_factor = 1
+                # if local_misclassified < initial_misclassified * self.acceptable_deterioration_factor:
+                #     break
 
-                        print("Number of misclassifieds for attribute (%d): %d" % (i, split_misclassified))
+                        # print("Number of misclassifieds for attribute (%d): %d" % (i, split_misclassified))
 
-        self.solution.tree = best_tree
-        print("===============================================")
-        print("Best tree:")
+        self.solution.tree = local_tree
+
+
+    def iterated_local_search(self, time_limit):
+        print("Starting standard greedy search...")
+
+        start_time = time.time()
+        self._recursive_construction(0, 0)
+        greedy_misclassifieds = self.solution.get_num_misclassified_samples()
+        end_time = time.time()
+
+        print("Executed standard greedy search in %.5f seconds" % (end_time - start_time))
+
+        if (time.time() > time_limit):
+            return
+
+        print("\n+++++++++++++++++++++++++++++++INITIAL ITERATED_SEARCH+++++++++++++++++++++++++++++++\n")
+
+        start_time = time.time()
+        annealing = 0.0001
+        if greedy_misclassifieds > 0:
+            print("Performing local search...")
+
+            best_tree = np.copy(self.solution.tree)
+            best_misclassifieds = self.solution.get_num_misclassified_samples()
+
+            self._local_search(0, annealing)
+
+            # home_base_tree = np.copy(self.solution.tree)
+            # home_base_misclassifieds = self.solution.get_num_misclassified_samples()
+
+            print("Local search finished. Misclassifieds: %s " % best_misclassifieds)
+            counter = 1
+            while(True):
+                print("Performing perturbation...")
+
+                minor_node = self._perturbation()
+
+                print("Performing local search...")
+
+                self._local_search(minor_node, annealing)
+                local_misclassifieds = self.solution.get_num_misclassified_samples()
+
+                print("Local search finished. Misclassifieds: %s " % local_misclassifieds)
+
+                if local_misclassifieds < best_misclassifieds:
+                    best_tree = np.copy(self.solution.tree)
+                    best_misclassifieds = local_misclassifieds
+
+                    print("New best_misclassifieds value.")
+
+                # print("Acceptable deterioration factor: " + str(self.acceptable_deterioration_factor))
+                # print("Counter: " + str(counter))
+                # print("Home base misclassifieds with deterioration: " + str(home_base_misclassifieds * self.acceptable_deterioration_factor))
+                # counter = counter + 1
+
+                # if local_misclassifieds <= home_base_misclassifieds * self.acceptable_deterioration_factor:
+                #     home_base_tree = np.copy(self.solution.tree)
+                #     home_base_misclassifieds = self.solution.get_num_misclassified_samples()
+
+                self.solution.tree = np.copy(best_tree)
+
+                print("--------------------------")
+
+                if (time.time() > time_limit) or (best_misclassifieds == 0):
+                    break
+
+            self.solution.tree = best_tree
+
+
+        end_time = time.time()
+
+        print("Executed iterated search in %.5f seconds" % (end_time - start_time))
+        print("\n+++++++++++++++++++++++++++++++END ITERATED_SEARCH+++++++++++++++++++++++++++++++\n")
