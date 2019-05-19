@@ -8,7 +8,7 @@ from os.path import join
 from datetime import datetime
 import random
 
-default_seed_list = [230, 129, 25, 48, 998]
+default_seed_list = [12, 0, 25, 48, 998]
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Decision tree optimization arguments.')
@@ -18,7 +18,7 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--seed', type=int, nargs='+', default=default_seed_list, help='Seed for the random function.')
     parser.add_argument('-d', '--max_depth', default=4, type=int, help="Maximum level of tree.")
     parser.add_argument('-m', '--max_execution_time_in_seconds', default=300, type=int, help="Maximum execution time for each instance. In seconds.")
-    parser.add_argument('-f', '--dataset_file', default='p06.txt', help="Dataset file to be processed.")
+    parser.add_argument('-f', '--dataset_file', help="Dataset file to be processed.")
 
     args = parser.parse_args()
 
@@ -58,6 +58,10 @@ if __name__ == "__main__":
 
             # solver.run()
             solver.iterated_local_search(time_limit)
+
+            # Write csv files with the results of accuracy and misclassifieds
+            solution.write_statistics_file()
+
             instance.end_time = time.time()
 
             delta = instance.end_time - instance.start_time
@@ -66,3 +70,5 @@ if __name__ == "__main__":
             # Printing the solution and exporting statistics (also export results into a file)
             solution.print_and_export(instance.solution_path)
             print("\n----- END OF ALGORITHM")
+
+    Solution.statistical_test()
