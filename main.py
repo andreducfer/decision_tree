@@ -51,11 +51,11 @@ if __name__ == "__main__":
             # Initialization of a solution structure
             solution = Solution(instance)
 
-            # Run the greedy or iterated local search algorithm
             print("\n----- STARTING DECISION TREE OPTIMIZATION...")
             instance.start_time = time.time()
             solver = Greedy(instance, solution)
 
+            # Run the greedy or iterated local search algorithm
             # solver.run()
             solver.iterated_local_search(time_limit)
 
@@ -71,4 +71,4 @@ if __name__ == "__main__":
             solution.print_and_export(instance.solution_path)
             print("\n----- END OF ALGORITHM")
 
-    Solution.statistical_test()
+    # Solution.statistical_test()
